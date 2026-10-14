@@ -17,10 +17,12 @@ from oelint_parser.rpl_regex import RegexRpl
 
 from oelint_adv.caches import Caches, __default_cache_dir
 from oelint_adv.cls_rule import Rule, load_rules
+from oelint_adv.embedded import tool_version
 from oelint_adv.rule_base.rule_file_inlinesuppress_na import (
     FileNotApplicableInlineSuppression,
 )
 from oelint_adv.state import State
+from oelint_adv.tools_config import ToolConfigError, load_tools_config
 from oelint_adv.tweaks import Tweaks
 
 config_basepath = os.getcwd()
@@ -337,7 +339,8 @@ def create_lib_arguments(files: List[str],
                          mode: str = 'fast',
                          cached: bool = False,
                          cachedir: str = __default_cache_dir,
-                         extra_layer: List[str] = None) -> argparse.Namespace:
+                         extra_layer: List[str] = None,
+                         tools_config: str = None) -> argparse.Namespace:
     """Create runtime arguments in library mode
 
     Args:
@@ -362,6 +365,7 @@ def create_lib_arguments(files: List[str],
         cached (bool, optional): Use caching
         cachedir (str, optional): Path to cache directory,
         extra_layer (List[str], optional): Extra 3rd party layer to load data for
+        tools_config (str, optional): Path to the tools configuration. Defaults to None.
 
     Returns:
         argparse.Namespace: runtime arguments
@@ -374,6 +378,7 @@ def create_lib_arguments(files: List[str],
     parser.add_argument('--addrules', nargs='+', default=[])
     parser.add_argument('--customrules', nargs='+', default=[])
     parser.add_argument('--rulefile', default=None)
+    parser.add_argument('--tools-config', default=None)
     parser.add_argument('--quiet', action='store_true', default=False)
     parser.add_argument('--jobs', type=int, default=mp.cpu_count())
     parser.add_argument('--color', action='store_true', default=False)
@@ -408,6 +413,7 @@ def create_lib_arguments(files: List[str],
         '--nobackup' if nobackup else '',
         *[f'--addrules={x}' for x in (additional_rules or ())],
         f'--rulefile={rulefile}' if rulefile else '',
+        f'--tools-config={tools_config}' if tools_config else '',
         f'--jobs={jobs}' if jobs else '',
         '--color' if color else '',
         '--quiet' if quiet else '',
@@ -495,6 +501,19 @@ def arguments_post(args: argparse.Namespace) -> argparse.Namespace:  # noqa: C90
         args.state.hide['warning'] = True
 
     args.state._caches = Caches(args)
+
+    if getattr(args, 'tools_config', None):
+        args.tools_config = os.path.join(config_basepath, os.path.expanduser(args.tools_config))
+        try:
+            args.state.tools = load_tools_config(args.tools_config)
+        except ToolConfigError as e:
+            raise argparse.ArgumentTypeError(str(e))
+        with open(args.tools_config, 'rb') as i:
+            args.state._caches.AddToFingerPrint(i.read())
+        if args.cached:
+            for tool in args.state.tools:
+                if tool.version_command:
+                    args.state._caches.AddToFingerPrint(tool_version(tool))
 
     for mod in args.constantmods:
         if isinstance(mod, str):

@@ -41,6 +41,8 @@ def create_argparser() -> argparse.ArgumentParser:
                         help='Additional directories to parse for rulessets').completer = argcomplete.DirectoriesCompleter
     parser.add_argument('--rulefile', default=None,
                         help='Rulefile')
+    parser.add_argument('--tools-config', default=None,
+                        help='JSON file defining external tools to run on embedded python and shell code')
     parser.add_argument('--jobs', type=int, default=mp.cpu_count(),
                         help='Number of jobs to run (default all cores)')
     parser.add_argument('--color', action='store_true', default=False,

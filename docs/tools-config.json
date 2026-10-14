@@ -1,0 +1,67 @@
+{
+  "tools": {
+    "shellcheck": {
+      "language": "shell",
+      "kind": "linter",
+      "scope": "function",
+      "command": ["shellcheck", "--shell=sh", "--format=gcc", "--exclude=SC2154,SC3043", "-"],
+      "output_regex": "^.*?:(?P<line>\\d+):(?P<col>\\d+): (?P<severity>\\w+): (?P<message>.*) \\[(?P<code>SC\\d+)\\]$",
+      "severity_map": {
+        "error": "error",
+        "warning": "warning",
+        "note": "info",
+        "style": "info"
+      },
+      "version_command": ["shellcheck", "--version"]
+    },
+    "ruff": {
+      "language": "python",
+      "kind": "linter",
+      "command": [
+        "ruff", "check", "--no-cache", "--output-format=concise",
+        "--config", "builtins = ['bb', 'oe', 'os', 'sys', 'time']",
+        "--stdin-filename", "{virtual_path}", "-"
+      ],
+      "output_regex": "^.*?:(?P<line>\\d+):(?P<col>\\d+): (?P<code>[A-Z]+[0-9]+) (?:\\[\\*\\] )?(?P<message>.*)$",
+      "version_command": ["ruff", "--version"]
+    },
+    "flake8": {
+      "language": "python",
+      "kind": "linter",
+      "input": "file",
+      "command": ["flake8", "--builtins=bb,oe,os,sys,time", "{file}"],
+      "output_regex": "^.*?:(?P<line>\\d+):(?P<col>\\d+): (?P<code>[A-Z]+[0-9]+) (?P<message>.*)$",
+      "version_command": ["flake8", "--version"]
+    },
+    "mypy": {
+      "language": "python",
+      "kind": "linter",
+      "input": "file",
+      "prelude": [
+        "import bb  # type: ignore",
+        "import oe  # type: ignore",
+        "import os",
+        "import sys",
+        "import time"
+      ],
+      "command": [
+        "mypy", "--check-untyped-defs", "--ignore-missing-imports", "--cache-dir=/dev/null",
+        "--no-error-summary", "--show-column-numbers", "--show-error-codes",
+        "--no-pretty", "--no-color-output", "--hide-error-context", "{file}"
+      ],
+      "output_regex": "^.*?:(?P<line>\\d+):(?P<col>\\d+): (?P<severity>error|warning|note): (?P<message>.*?)(?:  \\[(?P<code>[a-z0-9-]+)\\])?$",
+      "severity_map": {
+        "error": "warning",
+        "warning": "warning",
+        "note": null
+      },
+      "version_command": ["mypy", "--version"]
+    },
+    "black": {
+      "language": "python",
+      "kind": "formatter",
+      "command": ["black", "--quiet", "--stdin-filename", "{virtual_path}", "-"],
+      "version_command": ["black", "--version"]
+    }
+  }
+}

@@ -373,4 +373,8 @@ def load_rules(args, add_rules: Iterable[str] = (), add_dirs: Iterable[str] = ()
                 if not args.quiet:  # pragma: no cover
                     print(  # noqa: T201 this print is fine here
                         "Can't load rule {rule} -> {exp}".format(rule=name, exp=e))  # pragma: no cover
+
+    # rules running external tools, as defined in the tools configuration
+    from oelint_adv.cls_tool_rule import create_tool_rules
+    res += create_tool_rules(args.state)
     return res
