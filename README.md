@@ -45,7 +45,8 @@ pip install . # might require sudo/root permissions
 
 ```shell
 usage: oelint-adv [-h] [--suppress SUPPRESS] [--output OUTPUT] [--fix] [--nobackup] [--addrules ADDRULES [ADDRULES ...]]
-                  [--customrules CUSTOMRULES [CUSTOMRULES ...]] [--rulefile RULEFILE] [--jobs JOBS] [--color] [--quiet]
+                  [--customrules CUSTOMRULES [CUSTOMRULES ...]] [--rulefile RULEFILE] [--tools-config TOOLS_CONFIG]
+                  [--jobs JOBS] [--color] [--quiet]
                   [--hide {info,warning,error}]
                   [--mode {fast,all}] [--relpaths] [--messageformat MESSAGEFORMAT] [--outputformat {stdout,junit}]
                   [--constantmods CONSTANTMODS [CONSTANTMODS ...]] [--print-rulefile]
@@ -71,6 +72,8 @@ options:
   --customrules CUSTOMRULES [CUSTOMRULES ...]
                         Additional directories to parse for rulessets
   --rulefile RULEFILE   Rulefile
+  --tools-config TOOLS_CONFIG
+                        JSON file defining external tools to run on embedded python and shell code
   --jobs JOBS           Number of jobs to run (default all cores)
   --color               Add color to the output based on the severity
   --quiet               Print findings only
@@ -471,6 +474,85 @@ The severity of `oelint.file.includenotfound` will be the default of the tool, w
 
 Please see [oelint-parser](https://github.com/priv-kweihmann/oelint-parser) for further details, how to add your own constants to the parser.
 
+## Running external tools on embedded code
+
+Bitbake files contain shell code (e.g. `do_install() {...}`) and python code
+(e.g. `python do_foo() {...}`, `python () {...}`, `def helper(d): ...`).
+External linters and formatters, like `shellcheck`, `ruff`, `flake8`, `mypy` or `black`,
+can be run on this code, by defining them in a JSON file passed via `--tools-config`
+(or `tools-config` in the [configuration file](#configuration-file)).
+
+No tool is built in, every tool is defined in the configuration file, so any other tool
+can be added the same way.
+A ready to use example for `shellcheck`, `ruff`, `flake8`, `mypy` and `black` can be found
+in [docs/tools-config.json](docs/tools-config.json).
+The tools themselves need to be installed separately.
+
+```json
+{
+  "tools": {
+    "shellcheck": {
+      "language": "shell",
+      "kind": "linter",
+      "scope": "function",
+      "command": ["shellcheck", "--shell=sh", "--format=gcc", "--exclude=SC2154,SC3043", "-"],
+      "output_regex": "^.*?:(?P<line>\\d+):(?P<col>\\d+): (?P<severity>\\w+): (?P<message>.*) \\[(?P<code>SC\\d+)\\]$",
+      "severity_map": {"error": "error", "warning": "warning", "note": "info", "style": "info"}
+    },
+    "black": {
+      "language": "python",
+      "kind": "formatter",
+      "command": ["black", "--quiet", "--stdin-filename", "{virtual_path}", "-"]
+    }
+  }
+}
+```
+
+Every tool becomes a rule with the ID `oelint.tools.<name>`.
+Linter findings with a code get the sub ID `oelint.tools.<name>.<code>` (e.g. `oelint.tools.shellcheck.SC2086`),
+so they can be suppressed via `--suppress`, configured in a [rulefile](#defining-a-ruleset) or
+suppressed [inline](#inline-suppression) by a `# nooelint: oelint.tools.shellcheck.SC2086` comment placed above the function.
+The tools' own suppression comments (e.g. `# shellcheck disable=SC2086`, `# noqa: F401`, `# type: ignore`) work as well.
+
+### How the code is passed to the tools
+
+- **shell**: every shell function is passed as `<name>() {...}`
+- **python**: python functions are passed the way bitbake compiles them: `def <name>(d):`, or `def <name>(e, d):` for event handlers registered by `addhandler`. `def` functions are passed as they are.
+- inline python blocks (`${@...}`) are replaced by placeholders (`${OELINT_INLINE_0}` for shell, `OELINT_INLINE_0` for python)
+- findings are mapped back to the lines of the bitbake file, including `.inc` files. Findings on lines that don't exist in the bitbake file (e.g. a `prelude`) are dropped
+- code of an inherited class is checked once, as part of the `.bbclass` file (like all other rules do), not again for every recipe inheriting it
+- empty functions, python functions that aren't valid python and functions containing inline python blocks that span multiple lines are skipped
+- tools are run in the directory of the bitbake file, so they pick up the configuration files of your layer (e.g. `pyproject.toml`, `.shellcheckrc`, `setup.cfg`).
+  `{virtual_path}` is a path next to the bitbake file, for tools that read the code from stdin and use the path to find their configuration (e.g. `ruff --stdin-filename`)
+- the reported line is the line in the bitbake file, but line numbers within a tool's message (e.g. `redefinition of unused 'foo' from line 3`) refer to the code passed to the tool
+
+### Tool options
+
+| key                 | mandatory    | default                                         | description |
+| ------------------- | ------------ | ----------------------------------------------- | ----------- |
+| `language`          | yes          |                                                 | `python` or `shell` |
+| `kind`              | yes          |                                                 | `linter`: findings are parsed from the output. `formatter`: the output is the formatted code, a difference is reported at the function and applied by `--fix` |
+| `command`           | yes          |                                                 | command line. `{file}`, `{virtual_path}` and `{recipe}` are replaced by the path of the file containing the code, a path next to the bitbake file and the path of the bitbake file |
+| `input`             |              | `stdin`                                         | `stdin`: the code is passed via stdin. `file`: the code is written to `{file}` |
+| `scope`             |              | `file` for linters, `function` for formatters  | `file`: all functions of a bitbake file are passed at once. `function`: one function at a time (mandatory for formatters) |
+| `output_regex`      | for linters  |                                                 | regular expression matching a finding in the output. Named groups: `line` (mandatory), `code`, `severity`, `message`, other groups are ignored |
+| `output_stream`     |              | `stdout`                                        | `stdout` or `stderr` |
+| `severity`          |              | `warning` for linters, `info` for formatters   | severity of the findings |
+| `severity_map`      |              | `{}`                                            | map from the `severity` group to `info`, `warning`, `error` or `null` (= drop the finding). Unmapped values use `severity` |
+| `prelude`           |              | `[]`                                            | lines put in front of the code (linters only), e.g. imports of the modules bitbake provides |
+| `ok_returncodes`    |              | `[0, 1]` for linters, `[0]` for formatters     | return codes of a successful run |
+| `functions`         |              | `["*"]`                                         | only check functions matching one of these wildcard patterns (e.g. `do_*`, `do_install:append`) |
+| `exclude_functions` |              | `[]`                                            | don't check functions matching one of these wildcard patterns |
+| `timeout`           |              | `60`                                            | timeout in seconds |
+| `cwd`               |              | directory of the bitbake file                   | working directory, relative to the tools configuration file |
+| `env`               |              | `{}`                                            | additional environment variables |
+| `version_command`   |              | `[]`                                            | command printing the version of the tool. Used in [cached mode](#cached-mode) to invalidate the cache on tool updates |
+
+If a tool can't be found, times out, exits with a return code not listed in `ok_returncodes`, or exits with a non zero return code
+without any output matching `output_regex`, an `error` finding is reported.
+
+Formatters don't fix functions containing inline python blocks (`${@...}`), as the formatting could break them.
+
 ## Output message format
 
 You can freely define a custom output format.
@@ -553,6 +635,10 @@ When run with ``--cached`` the tool will store resuls into a local caching direc
 nothing has changed in the input tree and configuration.
 
 By default caches are stored to ``OELINT_CACHE_DIR`` environment variable (or `~/.oelint/caches` if not set).
+
+When using [external tools](#running-external-tools-on-embedded-code), changes to the tools configuration file
+and, if `version_command` is set, to the tool versions invalidate the cache.
+Changes to the tools' own configuration files (e.g. `pyproject.toml`) don't, run ``--clear-caches`` after changing them.
 
 To clear the local caches run ``--clear-caches``
 
