@@ -9,7 +9,7 @@ commit = false
 
 [tool.setuptools]
 include-package-data = false
-package-data.oelint_adv = ["data/*"]
+package-data.oelint_adv = ["data/*", "data/stubs/**/*.pyi"]
 packages.find.where = ["."] 
 packages.find.exclude = ["docs*", "tests*", ".*tests*", "tests", ".*tests.*"]
 

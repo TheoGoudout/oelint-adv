@@ -15,6 +15,13 @@ from oelint_parser.cls_stash import Stash
 from oelint_adv.tools_config import ToolConfig
 
 INLINE_PLACEHOLDER = 'OELINT_INLINE_{index}'
+# type stubs for the bb and oe modules
+STUBS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'stubs')
+# types of the parameters bitbake passes to python functions and event handlers
+PARAM_ANNOTATIONS = {
+    'd': 'bb.data_smart.DataSmart',
+    'e': 'bb.event.Event',
+}
 
 
 class ToolError(Exception):
@@ -155,11 +162,14 @@ def _event_handlers(stash: Stash, _file: str) -> List[str]:
     return res
 
 
-def python_wrapper(snippet: Snippet, name: str) -> str:
+def python_wrapper(snippet: Snippet, name: str, annotations: bool = False) -> str:
     if isinstance(snippet.item, PythonBlock):
         return ''
+    params = snippet.params
+    if annotations:
+        params = ', '.join(f'{x}: {PARAM_ANNOTATIONS[x]}' for x in params.split(', '))
     # this is how bitbake compiles python functions and event handlers
-    return f'def {name}({snippet.params}):\n'
+    return f'def {name}({params}):\n'
 
 
 def shell_wrapper(name: str) -> Tuple[str, str]:
@@ -265,7 +275,7 @@ def build_document(snippets: List[Snippet], tool: ToolConfig) -> Document:
         if tool.language == 'python':
             if lines:
                 lines += ['', '']
-            header, footer = python_wrapper(snippet, name), ''
+            header, footer = python_wrapper(snippet, name, tool.annotations), ''
         else:
             if lines:
                 lines.append('')
@@ -279,6 +289,12 @@ def build_document(snippets: List[Snippet], tool: ToolConfig) -> Document:
 
 
 _RESULTS: Dict[Tuple, Tuple[int, str, str]] = {}
+
+
+def _expand(value: str, placeholders: Dict[str, str]) -> str:
+    for key, replacement in {**placeholders, '{stubs}': STUBS_PATH}.items():
+        value = value.replace(key, replacement)
+    return value
 
 
 def run_tool(tool: ToolConfig, text: str, recipe: str) -> Tuple[int, str, str]:
@@ -305,18 +321,15 @@ def run_tool(tool: ToolConfig, text: str, recipe: str) -> Tuple[int, str, str]:
             tmpfile = os.path.join(tmpdir, f'oelint_snippet{tool.extension}')
             with open(tmpfile, 'w') as o:
                 o.write(text)
-            command = []
-            for arg in tool.command:
-                arg = arg.replace('{file}', tmpfile)
-                arg = arg.replace('{virtual_path}', virtual_path)
-                arg = arg.replace('{recipe}', recipe)
-                command.append(arg)
+            placeholders = {'{file}': tmpfile, '{virtual_path}': virtual_path, '{recipe}': recipe}
+            command = [_expand(x, placeholders) for x in tool.command]
+            env = {k: _expand(v, placeholders) for k, v in tool.env.items()}
             try:
                 proc = subprocess.run(command,  # noqa: S603 - command is user configured
                                       input=text if tool.input == 'stdin' else None,
                                       stdin=subprocess.DEVNULL if tool.input == 'file' else None,
                                       capture_output=True, text=True, cwd=cwd,
-                                      env={**os.environ, **tool.env}, timeout=tool.timeout)
+                                      env={**os.environ, **env}, timeout=tool.timeout)
             except FileNotFoundError:
                 raise ToolError(f"'{command[0]}' not found")
             except subprocess.TimeoutExpired:
@@ -423,7 +436,7 @@ def format_snippet(tool: ToolConfig, snippet: Snippet, recipe: str) -> Optional[
         return None
     name = _unique_names([snippet])[0]
     if tool.language == 'python':
-        header, footer = python_wrapper(snippet, name), ''
+        header, footer = python_wrapper(snippet, name, tool.annotations), ''
     else:
         header, footer = shell_wrapper(name)
     _, stdout, _ = run_tool(tool, header + snippet.body + footer, recipe)
@@ -459,7 +472,8 @@ def tool_version(tool: ToolConfig) -> str:
     """
     try:
         proc = subprocess.run(tool.version_command, capture_output=True, text=True,  # noqa: S603 - command is user configured
-                              stdin=subprocess.DEVNULL, env={**os.environ, **tool.env}, timeout=tool.timeout)
+                              stdin=subprocess.DEVNULL, timeout=tool.timeout,
+                              env={**os.environ, **{k: _expand(v, {}) for k, v in tool.env.items()}})
     except (OSError, subprocess.TimeoutExpired) as e:
         return f'{tool.name}:{e!r}'
     return f'{tool.name}:{proc.returncode}:{proc.stdout}{proc.stderr}'

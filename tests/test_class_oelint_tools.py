@@ -315,7 +315,7 @@ class TestClassOelintTools(TestBaseClass):
                                      python do_foo() {
                                          import os
 
-                                         bb.note(os.path.join(d.getVar("A"), "${@d.getVar('B')}"))
+                                         bb.note(os.path.join(d.getVar("A") or "", "${@d.getVar('B')}"))
                                          helper(d)
                                      }
 
@@ -327,7 +327,7 @@ class TestClassOelintTools(TestBaseClass):
                                      'oelint_adv_test.bb':
                                      '''
                                      python oelint_handler() {
-                                         bb.note(e.data.getVar("A") + d.getVar("B"))
+                                         bb.note((e.data.getVar("A") or "") + (d.getVar("B") or ""))
                                      }
                                      addhandler oelint_handler
                                      ''',
@@ -344,7 +344,7 @@ class TestClassOelintTools(TestBaseClass):
                                      'oelint_adv_test.bb':
                                      '''
                                      python helper() {
-                                         bb.note(d.getVar("A"))
+                                         bb.note(d.getVar("A") or "")
                                      }
 
                                      def helper(d):
@@ -358,6 +358,217 @@ class TestClassOelintTools(TestBaseClass):
         self.check_for_tool(args, id_, occurrence)
         # flake8 itself didn't fail
         self.check_for_id(args, 'oelint.tools.flake8', 0)
+
+    @pytest.mark.parametrize('id_,occurrence',
+                             [
+                                 ('oelint.tools.mypy.union-attr', 1),
+                                 ('oelint.tools.mypy.attr-defined', 0),
+                                 ('oelint.tools.mypy.arg-type', 0),
+                                 ('oelint.tools.mypy.import-not-found', 0),
+                             ],
+                             )
+    @pytest.mark.parametrize('input_',
+                             [
+                                 {
+                                     'oelint_adv_test.bb':
+                                     '''
+                                     python do_foo() {
+                                         bb.note(" ".join(d.getVar("A").split()))
+                                     }
+                                     ''',
+                                 },
+                                 {
+                                     'oelint_adv_test.bb':
+                                     '''
+                                     python () {
+                                         if d.getVarFlag("do_foo", "network").lower() == "1":
+                                             bb.utils.mkdirhier(d.expand("${WORKDIR}/foo"))
+                                     }
+                                     ''',
+                                 },
+                                 {
+                                     'oelint_adv_test.bb':
+                                     '''
+                                     python oelint_handler() {
+                                         bb.note(e.data.getVar("A").strip())
+                                     }
+                                     addhandler oelint_handler
+                                     ''',
+                                 },
+                             ],
+                             )
+    def test_python_typed_bad_none(self, input_, id_, occurrence):
+        self.check_for_id(self._create_args(input_, ['--tools-config', EXAMPLE_CONFIG]), id_, occurrence)
+
+    @pytest.mark.parametrize('id_,occurrence',
+                             [
+                                 ('oelint.tools.mypy.attr-defined', 1),
+                                 ('oelint.tools.mypy.arg-type', 1),
+                                 ('oelint.tools.mypy.import-not-found', 0),
+                             ],
+                             )
+    @pytest.mark.parametrize('input_',
+                             [
+                                 {
+                                     'oelint_adv_test.bb':
+                                     '''
+                                     python do_foo() {
+                                         bb.warning("a")
+                                         oe.path.join(d.getVar("A") or "", 1)
+                                     }
+                                     ''',
+                                 },
+                                 {
+                                     'oelint_adv_test.bb':
+                                     '''
+                                     python oelint_handler() {
+                                         bb.note(" ".join(e.getPkgs()))
+                                         bb.utils.mkdirhier(bb.utils.contains("A", "b", 1, None, d))
+                                     }
+                                     addhandler oelint_handler
+                                     ''',
+                                 },
+                             ],
+                             )
+    def test_python_typed_bad_api(self, input_, id_, occurrence):
+        self.check_for_id(self._create_args(input_, ['--tools-config', EXAMPLE_CONFIG]), id_, occurrence)
+
+    @pytest.mark.parametrize('id_', ['oelint.tools.mypy'])
+    @pytest.mark.parametrize('occurrence', [0])
+    @pytest.mark.parametrize('input_',
+                             [
+                                 {
+                                     'oelint_adv_test.bb':
+                                     '''
+                                     python do_foo() {
+                                         import oe.patch
+
+                                         fetcher = bb.fetch2.Fetch((d.getVar("SRC_URI") or "").split(), d)
+                                         fetcher.download()
+                                         for url in fetcher.urls:
+                                             bb.note(fetcher.localpath(url))
+                                         bb.fetch.Fetch([], d).unpack(d.getVar("WORKDIR") or "")
+                                         if oe.types.boolean(d.getVar("A")) and bb.data.inherits_class("native", d):
+                                             bb.utils.remove(oe.path.join(d.getVar("D") or "", "foo"), recurse=True)
+                                         d.setVar("B", oe.utils.conditional("A", "1", "a", "b", d).upper())
+                                         stdout, _ = bb.process.run(["true"])
+                                         oe.patch.PatchSet(d)
+                                         bb.runqueue.anything(stdout)
+                                     }
+
+                                     def helper(d):
+                                         return d.getVar("A").split()
+                                     ''',
+                                 },
+                                 {
+                                     'oelint_adv_test.bb':
+                                     '''
+                                     python oelint_handler() {
+                                         if isinstance(e, bb.event.BuildStarted):
+                                             bb.note(" ".join(e.getPkgs()))
+                                         elif isinstance(e, bb.build.TaskFailed):
+                                             bb.note(e.taskname, e.logfile or "")
+                                     }
+                                     addhandler oelint_handler
+                                     ''',
+                                 },
+                                 {
+                                     'oelint_adv_test.bb':
+                                     '''
+                                     python do_foo() {
+                                         try:
+                                             helper(d)
+                                         except bb.parse.SkipRecipe:
+                                             raise
+                                         except bb.process.ExecutionError as e:
+                                             bb.fatal(str(e.exitcode))
+                                     }
+
+                                     def helper(d: bb.data_smart.DataSmart):
+                                         return d.getVar("A") or ""
+                                     ''',
+                                 },
+                             ],
+                             )
+    def test_python_typed_good(self, input_, id_, occurrence):
+        self.check_for_tool(self._create_args(input_, ['--tools-config', EXAMPLE_CONFIG]), id_, occurrence)
+
+    @pytest.mark.parametrize('input_',
+                             [
+                                 {
+                                     'oelint_adv_test.bb':
+                                     '''
+                                     python do_foo() {
+                                         x = d.getVar('A')
+                                     }
+
+                                     python oelint_handler() {
+                                         x = e.data.getVar('A')
+                                     }
+                                     addhandler oelint_handler
+
+                                     def helper(d):
+                                         return d.getVar('A')
+                                     ''',
+                                 },
+                             ],
+                             )
+    def test_annotations_stubs(self, input_):
+        script = self._script('linter.py', '''
+            import os
+            import sys
+            stubs = sys.argv[1]
+            valid = stubs == os.environ['OELINT_STUBS'] and os.path.isfile(os.path.join(stubs, 'bb', 'data_smart.pyi'))
+            for index, line in enumerate(sys.stdin.read().splitlines(), start=1):
+                if line.startswith('def '):
+                    print(f'{index + 1}:{valid}:{line}')
+            ''')
+        tools = {
+            'typed': {
+                'language': 'python',
+                'kind': 'linter',
+                'annotations': True,
+                'command': [sys.executable, script, '{stubs}'],
+                'env': {'OELINT_STUBS': '{stubs}'},
+                'output_regex': '^(?P<line>\\d+):(?P<message>.*)$',
+            },
+        }
+        issues = sorted(x.split(':', 1)[1] for x in self._issues(
+            self._create_args(input_, ['--tools-config', self._tools_config(tools)])) if 'oelint.tools' in x)
+        assert issues == [
+            '11:warning:oelint.tools.typed:True:def helper(d): [branch:true]',
+            '2:warning:oelint.tools.typed:True:def do_foo(d: bb.data_smart.DataSmart): [branch:true]',
+            '6:warning:oelint.tools.typed:True:def oelint_handler(e: bb.event.Event, d: bb.data_smart.DataSmart): [branch:true]',
+        ], issues
+
+    @pytest.mark.parametrize('input_',
+                             [
+                                 {
+                                     'oelint_adv_test.bb':
+                                     '''
+                                     python do_foo() {
+                                         x = d.getVar('A')
+                                     }
+                                     ''',
+                                 },
+                             ],
+                             )
+    def test_annotations_formatter(self, input_):
+        from oelint_adv.__main__ import run
+        with open(EXAMPLE_CONFIG) as i:
+            black = json.load(i)['tools']['black']
+        tools = {'black': {**black, 'annotations': True}}
+        args = self._create_args_fix(input_, ['--tools-config', self._tools_config(tools)])
+        run(args)
+        with open(args.files[0]) as i:
+            assert i.read() == 'python do_foo() {\n    x = d.getVar("A")\n}\n'
+
+    def test_stubs(self):
+        import subprocess
+        from oelint_adv.embedded import STUBS_PATH
+        proc = subprocess.run(['mypy', '--strict', '--cache-dir=/dev/null', '-p', 'bb', '-p', 'oe'],
+                              capture_output=True, text=True, env={**os.environ, 'MYPYPATH': STUBS_PATH})
+        assert proc.returncode == 0, proc.stdout + proc.stderr
 
     @pytest.mark.parametrize('id_', ['oelint.tools.black'])
     @pytest.mark.parametrize('input_',

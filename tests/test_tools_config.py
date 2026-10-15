@@ -37,6 +37,7 @@ class TestClassToolsConfig(TestBaseClass):
         assert linter.functions == ['*']
         assert linter.exclude_functions == []
         assert linter.cwd is None
+        assert linter.annotations is False
         assert linter.extension == '.py'
         assert formatter.scope == 'function'
         assert formatter.severity == 'info'
@@ -66,6 +67,12 @@ class TestClassToolsConfig(TestBaseClass):
         assert tool.cwd == '/base/sub'
         assert tool.severity_map == {'a': 'info', 'b': None}
         assert tool.timeout == 1.5
+
+    def test_annotations(self):
+        linter, formatter = self._parse({'lint': {**self.LINTER, 'annotations': True},
+                                         'fmt': {**self.FORMATTER, 'annotations': True}})
+        assert linter.annotations is True
+        assert formatter.annotations is True
 
     def test_empty(self):
         from oelint_adv.tools_config import parse_tools_config
@@ -105,6 +112,8 @@ class TestClassToolsConfig(TestBaseClass):
                                  ('a', {**LINTER, 'prelude': 'import os'}, "'prelude' must be a list of strings"),
                                  ('a', {**LINTER, 'prelude': ['a\nb']}, 'must not contain line breaks'),
                                  ('a', {**FORMATTER, 'prelude': ['a']}, "formatters don't support 'prelude'"),
+                                 ('a', {**LINTER, 'annotations': 'yes'}, "'annotations' must be a boolean"),
+                                 ('a', {**LINTER, 'language': 'shell', 'annotations': True}, "'annotations' is only valid for python"),
                                  ('a', {'language': 'python', 'kind': 'linter', 'command': ['a']}, "'output_regex' is mandatory"),
                                  ('a', {**LINTER, 'output_regex': 1}, "'output_regex' must be a string"),
                                  ('a', {**LINTER, 'output_regex': '('}, "'output_regex' is invalid"),
@@ -178,11 +187,14 @@ class TestClassToolsConfig(TestBaseClass):
         assert [(x.line, x.message, x.code, x.severity) for x in findings] == [(10, 'ok', '', 'warning')]
 
     def test_tool_version(self):
-        from oelint_adv.embedded import tool_version
+        from oelint_adv.embedded import STUBS_PATH, tool_version
         from oelint_adv.tools_config import ToolConfig
         tool = ToolConfig(name='a', language='shell', kind='linter', command=['a'],
                           version_command=[sys.executable, '-c', 'print("1.0")'])
         assert tool_version(tool) == 'a:0:1.0\n'
+        tool.env = {'OELINT_STUBS': '{stubs}'}
+        tool.version_command = [sys.executable, '-c', 'import os; print(os.environ["OELINT_STUBS"])']
+        assert tool_version(tool) == f'a:0:{STUBS_PATH}\n'
         tool.version_command = ['oelint-adv-tool-does-not-exist']
         assert tool_version(tool).startswith('a:FileNotFoundError(')
         tool.version_command = [sys.executable, '-c', 'import time; time.sleep(10)']
