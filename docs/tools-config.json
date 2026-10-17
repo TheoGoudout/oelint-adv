@@ -37,9 +37,10 @@
       "language": "python",
       "kind": "linter",
       "input": "file",
+      "annotations": true,
       "prelude": [
-        "import bb  # type: ignore",
-        "import oe  # type: ignore",
+        "import bb",
+        "import oe",
         "import os",
         "import sys",
         "import time"
@@ -49,6 +50,9 @@
         "--no-error-summary", "--show-column-numbers", "--show-error-codes",
         "--no-pretty", "--no-color-output", "--hide-error-context", "{file}"
       ],
+      "env": {
+        "MYPYPATH": "{stubs}"
+      },
       "output_regex": "^.*?:(?P<line>\\d+):(?P<col>\\d+): (?P<severity>error|warning|note): (?P<message>.*?)(?:  \\[(?P<code>[a-z0-9-]+)\\])?$",
       "severity_map": {
         "error": "warning",

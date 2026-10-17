@@ -526,13 +526,39 @@ The tools' own suppression comments (e.g. `# shellcheck disable=SC2086`, `# noqa
   `{virtual_path}` is a path next to the bitbake file, for tools that read the code from stdin and use the path to find their configuration (e.g. `ruff --stdin-filename`)
 - the reported line is the line in the bitbake file, but line numbers within a tool's message (e.g. `redefinition of unused 'foo' from line 3`) refer to the code passed to the tool
 
+### Type checking python code
+
+oelint-adv ships type stubs for the `bb` and `oe` modules. Their path is available as the `{stubs}` placeholder in `command` and `env`.
+They cover the datastore (`bb.data_smart.DataSmart`), `bb`, `bb.data`, `bb.utils`, `bb.event`, `bb.build`,
+`bb.process`, `bb.parse`, `bb.fetch`/`bb.fetch2`, `oe.utils`, `oe.path`, `oe.types`, `oe.data`, `oe.qa` and `oe.packagedata`.
+All other submodules are available, but untyped.
+
+With `"annotations": true` the parameters of python functions are annotated with the types bitbake passes:
+
+```python
+def do_foo(d: bb.data_smart.DataSmart):
+def oelint_handler(e: bb.event.Event, d: bb.data_smart.DataSmart):
+```
+
+so type checkers check the use of the datastore and of the `bb` and `oe` APIs, e.g. `d.getVar('A').split()`
+is reported, as `d.getVar` returns `None` for unset variables.
+`def` functions are passed as they are, annotate their parameters (e.g. `def helper(d: bb.data_smart.DataSmart):`) to get them checked as well.
+
+The `mypy` example in [docs/tools-config.json](docs/tools-config.json) uses the stubs, the relevant options are:
+
+```json
+"annotations": true,
+"prelude": ["import bb", "import oe", "import os", "import sys", "import time"],
+"env": {"MYPYPATH": "{stubs}"}
+```
+
 ### Tool options
 
 | key                 | mandatory    | default                                         | description |
 | ------------------- | ------------ | ----------------------------------------------- | ----------- |
 | `language`          | yes          |                                                 | `python` or `shell` |
 | `kind`              | yes          |                                                 | `linter`: findings are parsed from the output. `formatter`: the output is the formatted code, a difference is reported at the function and applied by `--fix` |
-| `command`           | yes          |                                                 | command line. `{file}`, `{virtual_path}` and `{recipe}` are replaced by the path of the file containing the code, a path next to the bitbake file and the path of the bitbake file |
+| `command`           | yes          |                                                 | command line. `{file}`, `{virtual_path}`, `{recipe}` and `{stubs}` are replaced by the path of the file containing the code, a path next to the bitbake file, the path of the bitbake file and the path of the [type stubs](#type-checking-python-code) |
 | `input`             |              | `stdin`                                         | `stdin`: the code is passed via stdin. `file`: the code is written to `{file}` |
 | `scope`             |              | `file` for linters, `function` for formatters  | `file`: all functions of a bitbake file are passed at once. `function`: one function at a time (mandatory for formatters) |
 | `output_regex`      | for linters  |                                                 | regular expression matching a finding in the output. Named groups: `line` (mandatory), `code`, `severity`, `message`, other groups are ignored |
@@ -540,12 +566,13 @@ The tools' own suppression comments (e.g. `# shellcheck disable=SC2086`, `# noqa
 | `severity`          |              | `warning` for linters, `info` for formatters   | severity of the findings |
 | `severity_map`      |              | `{}`                                            | map from the `severity` group to `info`, `warning`, `error` or `null` (= drop the finding). Unmapped values use `severity` |
 | `prelude`           |              | `[]`                                            | lines put in front of the code (linters only), e.g. imports of the modules bitbake provides |
+| `annotations`       |              | `false`                                         | annotate the parameters of python functions with their [types](#type-checking-python-code) (python only) |
 | `ok_returncodes`    |              | `[0, 1]` for linters, `[0]` for formatters     | return codes of a successful run |
 | `functions`         |              | `["*"]`                                         | only check functions matching one of these wildcard patterns (e.g. `do_*`, `do_install:append`) |
 | `exclude_functions` |              | `[]`                                            | don't check functions matching one of these wildcard patterns |
 | `timeout`           |              | `60`                                            | timeout in seconds |
 | `cwd`               |              | directory of the bitbake file                   | working directory, relative to the tools configuration file |
-| `env`               |              | `{}`                                            | additional environment variables |
+| `env`               |              | `{}`                                            | additional environment variables. The placeholders of `command` are replaced in the values |
 | `version_command`   |              | `[]`                                            | command printing the version of the tool. Used in [cached mode](#cached-mode) to invalidate the cache on tool updates |
 
 If a tool can't be found, times out, exits with a return code not listed in `ok_returncodes`, or exits with a non zero return code

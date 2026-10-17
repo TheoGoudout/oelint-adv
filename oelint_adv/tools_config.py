@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Pattern
 LANGUAGES = ('python', 'shell')
 KINDS = ('linter', 'formatter')
 SEVERITIES = ('info', 'warning', 'error')
-PLACEHOLDERS = ('{file}', '{virtual_path}', '{recipe}')
+PLACEHOLDERS = ('{file}', '{virtual_path}', '{recipe}', '{stubs}')
 
 
 class ToolConfigError(ValueError):
@@ -25,6 +25,7 @@ class ToolConfig:
     input: str = 'stdin'  # noqa: A003, VNE003 - name of the config key
     scope: str = 'file'
     prelude: List[str] = field(default_factory=list)
+    annotations: bool = False
     output_regex: Optional[Pattern] = None
     output_stream: str = 'stdout'
     severity: str = 'warning'
@@ -59,7 +60,7 @@ def _parse_tool(name: str, spec: dict, basepath: str) -> ToolConfig:  # noqa: C9
         raise ToolConfigError(f"tool '{name}': definition must be an object")
 
     known = {
-        'language', 'kind', 'command', 'input', 'scope', 'prelude', 'output_regex', 'output_stream',
+        'language', 'kind', 'command', 'input', 'scope', 'prelude', 'annotations', 'output_regex', 'output_stream',
         'severity', 'severity_map', 'ok_returncodes', 'functions', 'exclude_functions',
         'timeout', 'cwd', 'env', 'version_command',
     }
@@ -100,6 +101,12 @@ def _parse_tool(name: str, spec: dict, basepath: str) -> ToolConfig:  # noqa: C9
         raise ToolConfigError(f"tool '{name}': 'prelude' entries must not contain line breaks")
     if kind == 'formatter' and tool.prelude:
         raise ToolConfigError(f"tool '{name}': formatters don't support 'prelude'")
+
+    tool.annotations = spec.get('annotations', False)
+    if not isinstance(tool.annotations, bool):
+        raise ToolConfigError(f"tool '{name}': 'annotations' must be a boolean")
+    if tool.annotations and language != 'python':
+        raise ToolConfigError(f"tool '{name}': 'annotations' is only valid for python")
 
     if kind == 'linter':
         if 'output_regex' not in spec:
